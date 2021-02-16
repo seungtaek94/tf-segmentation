@@ -133,8 +133,8 @@ def get_dataset(path: str, ignore_class: list, img_hight=1024, img_width=2048, b
     AUTOTUNE = tf.data.experimental.AUTOTUNE
     BUFFER_SIZE = 1000
 
-    training_data_path = os.path.join(path, 'leftImg8bit/train')
-    val_data_path = os.path.join(path, 'leftImg8bit/val')
+    training_data_path = os.path.join(path, 'training/images')
+    val_data_path = os.path.join(path, 'validation/images')
 
     training_data_dir = pathlib.Path(training_data_path)
     val_data_dir = pathlib.Path(val_data_path)
@@ -167,7 +167,7 @@ def get_dataset(path: str, ignore_class: list, img_hight=1024, img_width=2048, b
 
 
 if __name__ == '__main__':
-    data_path = '/home/seungtaek/ssd1/datasets/cityscapes'
+    data_path = '/home/seungtaek/ssd1/datasets/mv'
     ignore_class = [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
                     29, 30, 31, 32, 33, -1]
 
