@@ -1,6 +1,6 @@
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '4'
-os.environ["CUDA_VISIBLE_DEVICES"]='2,3'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1, 2, 3'
 
 import tensorflow as tf
 import time, logging
@@ -15,25 +15,24 @@ from util.losses import *
 def parse_args():
     parser = argparse.ArgumentParser()
     # Training
-    parser.add_argument('--batch-size', type=int, default=2, help='training batch size per device (CPU/GPU).')
+    parser.add_argument('--batch-size', type=int, default=8, help='training batch size per device (CPU/GPU).')
     #parser.add_argument('--num-gpus', type=int, default=2, help='number of gpus to use.')
-    parser.add_argument('--model', type=str, default='unet',
-                        help='model to use. options are resnet and wrn. default is resnet.')
-    parser.add_argument('--num-epochs', type=int, default=150, help='number of training epochs.')
+    parser.add_argument('--model', type=str, default='unet', help='model to use. options are resnet and wrn. default is resnet.')
+    parser.add_argument('--num-epochs', type=int, default=200, help='number of training epochs.')
     parser.add_argument('--lr', type=float, default=0.0001, help='learning rate. default is 0.1.')
     parser.add_argument('--lr-decay', type=float, default=0.1, help='decay rate of learning rate. default is 0.1.')
-    parser.add_argument('--lr-decay-step', type=str, default='80,120',
-                        help='epochs at which learning rate decays. default is 80,120')
+    parser.add_argument('--lr-decay-step', type=str, default='150,180', help='epochs at which learning rate decays. default is 80,120')
+    parser.add_argument('--loss', type=str, default='SCCE', help='SCCE, BCE, focal, dice, soft_dice')
 
-    parser.add_argument('--resume-from', type=str, help='resume training from the model')
     parser.add_argument('--optimizer', type=str, default='adam', help='sgd, nag')
-    parser.add_argument('--model-name', type=str, default='pspunet', help='model name')
+    parser.add_argument('--model-name', type=str, default='Unet', help='model name')
 
     # Dataset
     parser.add_argument('--dataset-path', type=str, default='/home/seungtaek/ssd1/datasets/mapillary_vistas',
                         help='dataset path')
     parser.add_argument('--image-height', type=int , default=512, help='image height')
     parser.add_argument('--image-width', type=int, default=1024, help='image width')
+
 
     return parser.parse_args()
 
@@ -45,33 +44,6 @@ def decay(epoch, lr, lr_decay, lr_decay_step):
     else:
         return lr * (lr_decay ** 2)
 
-
-def create_mask(pred_mask: tf.Tensor) -> tf.Tensor:
-    """Return a filter mask with the top 1 predictions
-    only.
-
-    Parameters
-    ----------
-    pred_mask : tf.Tensor
-        A [IMG_SIZE, IMG_SIZE, N_CLASS] tensor. For each pixel we have
-        N_CLASS values (vector) which represents the probability of the pixel
-        being these classes. Example: A pixel with the vector [0.0, 0.0, 1.0]
-        has been predicted class 2 with a probability of 100%.
-
-    Returns
-    -------
-    tf.Tensor
-        A [IMG_SIZE, IMG_SIZE, 1] mask with top 1 predictions
-        for each pixels.
-    """
-    # pred_mask -> [IMG_SIZE, SIZE, N_CLASS]
-    # 1 prediction for each class but we want the highest score only
-    # so we use argmax
-    pred_mask = tf.argmax(pred_mask, axis=-1)
-    # pred_mask becomes [IMG_SIZE, IMG_SIZE]
-    # but matplotlib needs [IMG_SIZE, IMG_SIZE, 1]
-    pred_mask = tf.expand_dims(pred_mask, axis=-1)
-    return pred_mask
 
 def show_predictions(img, gt, epoch, plot_dir):
     """Show a sample prediction.
@@ -117,7 +89,7 @@ if __name__ == '__main__':
         os.mkdir('./log')
 
     model_name = opt.model_name
-    filehandler = logging.FileHandler(f'./log/{model_name}_c{num_classes}_{timePrefix}.log')
+    filehandler = logging.FileHandler(f'./log/{model_name}_c{num_classes}_{opt.loss}_{timePrefix}.log')
     streamhandler = logging.StreamHandler()
 
     logger = logging.getLogger('')
@@ -130,7 +102,7 @@ if __name__ == '__main__':
     if not os.path.isdir('./exp'):
         os.mkdir('./exp')
 
-    exp_base_dir = f'./exp/{opt.model_name}_{timePrefix}_c{num_classes}'
+    exp_base_dir = f'./exp/{opt.model_name}_{timePrefix}_c{num_classes}_{opt.loss}_{opt.lr}'
     checkpoints_dir = exp_base_dir + '/checkpoints'
     plot_dir = exp_base_dir + '/plot'
 
@@ -149,17 +121,12 @@ if __name__ == '__main__':
     print("Val Shape:", dataset['val'])
 
     with strategy.scope():
-        #model = Unet(opt.image_height, opt.image_width, num_classes)
-        model = pspunet((opt.image_height, opt.image_width, 3), num_classes)
+        model = Unet(opt.image_height, opt.image_width, num_classes)
+        #model = pspunet((opt.image_height, opt.image_width, 3), num_classes)
         train_ds = strategy.experimental_distribute_dataset(dataset['train'])
         val_ds = strategy.experimental_distribute_dataset(dataset['val'])
 
-        if num_classes == 2:
-            loss_fn = soft_dice_loss(smooth=0.1)
-            logger.info("Loss: soft_dice_loss")
-        else:
-            loss_fn = tf.keras.losses.SparseCategoricalCrossentropy()
-            logger.info("Loss: SCCE")
+        loss_fn = get_loss(opt.loss)
 
         model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=opt.lr),
@@ -180,11 +147,16 @@ if __name__ == '__main__':
         tf.keras.callbacks.LearningRateScheduler(lambda epoch: decay(epoch, opt.lr, opt.lr_decay, lr_decay_step))
     ]
 
-    #steps_per_epoch = 2975 // opt.batch_size
-    #val_step = 500 // opt.batch_size
+    '''
+    steps_per_epoch = 2975 // opt.batch_size
+    val_step = 500 // opt.batch_size
+    '''
 
-    steps_per_epoch = 10
-    val_step = 1
+    steps_per_epoch = 18000 // opt.batch_size
+    val_step = 2000 // opt.batch_size
+
+    #steps_per_epoch = 10
+    #val_step = 1
 
     history = model.fit(
         train_ds,

@@ -141,10 +141,47 @@ def pspunet(input_shape, n_classes):
 
 if __name__ == "__main__":
 
-    model = pspunet((256, 512, 3), 32)
+    model = pspunet((512, 1024, 3), 5)
 
-    x = tf.random.uniform([2, 256, 512, 3], 0, 1)
-    y = model(x)
-    print(y.shape)
+    #x = tf.random.uniform([2, 256, 512, 3], 0, 1)
 
-    model.summary()
+    from util.func import *
+    from util.dataloader.mapilaryVitas import *
+
+    data_path = '/home/seungtaek/ssd1/datasets/mapillary_vistas'
+    json_path = os.path.join(data_path, 'config_v2.0.json')
+    print(json_path)
+    Labels = pars_json_label(json_path)
+
+    ignore_class = [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28, 29,
+                    30, 31, 32, 33, -1]
+
+    dataset = get_dataset(data_path, ignore_class, 512, 1024, batch_size=2)
+
+    for i, data in enumerate(dataset['train']):
+        display_list = []
+        print(data[0][0].shape)
+        print(data[1][0].shape)
+
+        pred = model(data[0])
+        pred = tf.argmax(pred, axis=-1)
+        print(pred.shape)
+
+        uniques, idx, counts = get_uniques(pred[0])
+
+        tf.print("tf.shape(uniques) =", tf.shape(uniques))
+        tf.print("tf.shape(idx) =", tf.shape(idx))
+        tf.print("tf.shape(counts) =", tf.shape(counts))
+        tf.print("uniques =", uniques)
+
+        display_list.append(data[0][0])
+        display_list.append(data[1][0])
+        display_list.append(pred[0])
+        display_sample_one(display_list)
+        if i == 3: break
+
+    display_sample(display_list)
+
+
+
+    #model.summary()
