@@ -65,7 +65,7 @@ class Unet(tf.keras.Model):
         self.conv_up3 = UpSample(128)
         self.conv_up4 = UpSample(64)
 
-        if classes_num == 2:
+        if classes_num == 1:
             self.out =  tf.keras.layers.Conv2D(1, 1, padding='same', activation='sigmoid', name='Output')
             print('Out Put with Sigmoid')
         else:
@@ -88,11 +88,11 @@ class Unet(tf.keras.Model):
 
         return x
 
+
 if __name__ == "__main__":
+    model = Unet(512, 1024, 5)
 
-    model = Unet(256, 512, 35)
-
-    x = tf.random.uniform([2, 256, 512, 3], 0, 1)
+    x = tf.random.uniform([2, 512, 1024, 3], 0, 1)
     y = model(x)
     print(y.shape)
 

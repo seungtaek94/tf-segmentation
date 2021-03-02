@@ -1,6 +1,6 @@
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '4'
-os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1, 2, 3'
+os.environ["CUDA_VISIBLE_DEVICES"] = '2, 3'
 
 import tensorflow as tf
 import time, logging
@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument('--loss', type=str, default='SCCE', help='SCCE, BCE, focal, dice, soft_dice')
 
     parser.add_argument('--optimizer', type=str, default='adam', help='sgd, nag')
-    parser.add_argument('--model-name', type=str, default='Unet', help='model name')
+    parser.add_argument('--model-name', type=str, default='pspunet', help='model name')
 
     # Dataset
     parser.add_argument('--dataset-path', type=str, default='/home/seungtaek/ssd1/datasets/mapillary_vistas',
@@ -58,6 +58,7 @@ def show_predictions(img, gt, epoch, plot_dir):
     pred_mask = model.predict(img)
     display_sample([img[0], gt[0], create_mask(pred_mask[0])], epoch, plot_dir)
 
+
 class DisplayCallback(tf.keras.callbacks.Callback):
     def __init__(self, img, gt, plot_dir):
         super(DisplayCallback, self).__init__()
@@ -68,6 +69,19 @@ class DisplayCallback(tf.keras.callbacks.Callback):
     def on_epoch_end(self, epoch, logs=None):
         show_predictions(self.img, self.gt, epoch, self.plot_dir)
         print ('\nSample Prediction after epoch {}\n'.format(epoch+1))
+
+
+class SaveCallback(tf.keras.callbacks.Callback):
+    def __init__(self, base_dir):
+        super(SaveCallback, self).__init__()
+        self.base_dir = base_dir
+        self.save_dir = f'{self.base_dir}/save_model/'
+        os.mkdir(self.save_dir)
+
+    def on_epoch_end(self, epoch, logs=None):
+        model_save_dir = os.path.join(self.save_dir, f'{epoch:0>3}')
+        model.save(model_save_dir)
+
 
 if __name__ == '__main__':
     opt = parse_args()
@@ -83,7 +97,7 @@ if __name__ == '__main__':
 
     ignore_classes = [-1]
 
-    num_classes = 5
+    num_classes = 2
 
     if not os.path.isdir('./log'):
         os.mkdir('./log')
@@ -121,8 +135,8 @@ if __name__ == '__main__':
     print("Val Shape:", dataset['val'])
 
     with strategy.scope():
-        model = Unet(opt.image_height, opt.image_width, num_classes)
-        #model = pspunet((opt.image_height, opt.image_width, 3), num_classes)
+        #model = Unet(opt.image_height, opt.image_width, num_classes)
+        model = pspunet((opt.image_height, opt.image_width, 3), num_classes)
         train_ds = strategy.experimental_distribute_dataset(dataset['train'])
         val_ds = strategy.experimental_distribute_dataset(dataset['val'])
 
@@ -134,7 +148,7 @@ if __name__ == '__main__':
             metrics=['accuracy']
         )
 
-    cp_prefix = os.path.join(checkpoints_dir, "ckpt_{epoch:0>3}.h5")
+    cp_prefix = os.path.join(checkpoints_dir, "ckpt_{epoch:0>3}.ckpt")
 
     lr_decay_step = list(map(int, opt.lr_decay_step.split(',')))
     tensorboar_logs_dir = f'{exp_base_dir}/tblogs'
@@ -142,6 +156,7 @@ if __name__ == '__main__':
 
     callbacks = [
         DisplayCallback(sample_image, sample_mask, plot_dir),
+        SaveCallback(exp_base_dir),
         tf.keras.callbacks.TensorBoard(log_dir=tensorboar_logs_dir),
         tf.keras.callbacks.ModelCheckpoint(filepath=cp_prefix),
         tf.keras.callbacks.LearningRateScheduler(lambda epoch: decay(epoch, opt.lr, opt.lr_decay, lr_decay_step))
@@ -167,6 +182,3 @@ if __name__ == '__main__':
         callbacks=callbacks
     )
 
-    model_save_dir = f'{exp_base_dir}/save_model'
-    os.mkdir(model_save_dir)
-    model.save(model_save_dir)

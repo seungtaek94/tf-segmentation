@@ -34,7 +34,6 @@ def parse_image(img_path: str, ignore_class: list, img_height=512, img_width=102
     image = tf.image.decode_jpeg(image, channels=3)
     image = tf.image.resize(image, (img_height, img_width))
     image = tf.cast(image, tf.uint8)
-    #image = tf.image.convert_image_dtype(image, tf.uint8)
 
     # For one Image path:
     # ../datasets/mapillary_vitas/training/images/*.jpg
@@ -58,29 +57,17 @@ def parse_image(img_path: str, ignore_class: list, img_height=512, img_width=102
     #_mask2 += tf.where(tf.reduce_all(mask == (100, 128, 160), axis=2), np.dtype('uint8').type(10), 250)  # Manhole
     #_mask2 += tf.where(tf.reduce_all(mask == (220, 128, 128), axis=2), np.dtype('uint8').type(10), 250)  # Catch basin
 
-    mask += tf.where(tf.reduce_all(mask_row == (255, 255, 255), axis=2), np.dtype('uint8').type(2), 0)  # Lane, Cross_walk
-    mask += tf.where(tf.reduce_all(mask_row == (250, 170, 29), axis=2), np.dtype('uint8').type(2), 0)  # Zigzag
+    mask += tf.where(tf.reduce_all(mask_row == (255, 255, 255), axis=2), np.dtype('uint8').type(1), 0)  # Lane, Cross_walk
+    mask += tf.where(tf.reduce_all(mask_row == (250, 170, 29), axis=2), np.dtype('uint8').type(1), 0)  # Zigzag
 
-    mask += tf.where(tf.reduce_all(mask_row == (196, 196, 196), axis=2), np.dtype('uint8').type(3), 0)  # Curb
+    #mask += tf.where(tf.reduce_all(mask_row == (196, 196, 196), axis=2), np.dtype('uint8').type(3), 0)  # Curb
 
-    mask += tf.where(tf.reduce_all(mask_row == (128, 128, 128), axis=2), np.dtype('uint8').type(4), 0)  # Traffic Sign Frame
-    mask += tf.where(tf.reduce_all(mask_row == (192, 192, 192), axis=2), np.dtype('uint8').type(4), 0)  # Traffic Sign - Ambiguous, back
-    mask += tf.where(tf.reduce_all(mask_row == (220, 220, 0), axis=2), np.dtype('uint8').type(4), 0)  # Traffic Sign - Direction, temp
-    mask += tf.where(tf.reduce_all(mask_row == (0, 0, 196), axis=2), np.dtype('uint8').type(4), 0)    # Traffic Sign - Parking
+    #mask += tf.where(tf.reduce_all(mask_row == (128, 128, 128), axis=2), np.dtype('uint8').type(4), 0)  # Traffic Sign Frame
+    #mask += tf.where(tf.reduce_all(mask_row == (192, 192, 192), axis=2), np.dtype('uint8').type(4), 0)  # Traffic Sign - Ambiguous, back
+    #mask += tf.where(tf.reduce_all(mask_row == (220, 220, 0), axis=2), np.dtype('uint8').type(4), 0)  # Traffic Sign - Direction, temp
+    #mask += tf.where(tf.reduce_all(mask_row == (0, 0, 196), axis=2), np.dtype('uint8').type(4), 0)    # Traffic Sign - Parking
 
     mask = tf.where(mask == 0, np.dtype('uint8').type(0), mask)
-
-    '''
-    uniques, idx, counts = get_uniques(mask)
-
-    tf.print("tf.shape(uniques) =", tf.shape(uniques))
-    tf.print("tf.shape(idx) =", tf.shape(idx))
-    tf.print("tf.shape(counts) =", tf.shape(counts))
-    tf.print("uniques =", uniques)
-    '''
-    #_mask2 += tf.where(tf.reduce_all(mask == (140, 140, 255), axis=2), np.dtype('uint8').type(50), 0)
-    #_mask2 = tf.where(tf.reduce_all(mask == (110, 110, 100), axis=2), np.dtype('uint8').type(70), 0)
-
 
     mask = tf.expand_dims(mask, axis=-1)
 
