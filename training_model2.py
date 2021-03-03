@@ -1,12 +1,11 @@
 import os
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '4'
-os.environ["CUDA_VISIBLE_DEVICES"]='0,1'
+#os.environ['TF_CPP_MIN_LOG_LEVEL'] = '4'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0, 1'
 
 import tensorflow as tf
 import time, logging
 import argparse
-from models.unet import Unet
-from models.pspunet import pspunet
+from models.pspunet import Unet
 #from util.dataloader.cityscapes import get_dataset
 from util.dataloader.mapilaryVitas import get_dataset
 from util.func import *
@@ -15,14 +14,14 @@ from util.losses import *
 def parse_args():
     parser = argparse.ArgumentParser()
     # Training
-    parser.add_argument('--batch-size', type=int, default=32, help='training batch size per device (CPU/GPU).')
+    parser.add_argument('--batch-size', type=int, default=4, help='training batch size per device (CPU/GPU).')
     #parser.add_argument('--num-gpus', type=int, default=2, help='number of gpus to use.')
     parser.add_argument('--model', type=str, default='unet', help='model to use. options are resnet and wrn. default is resnet.')
-    parser.add_argument('--num-epochs', type=int, default=150, help='number of training epochs.')
-    parser.add_argument('--lr', type=float, default=0.001, help='learning rate. default is 0.1.')
+    parser.add_argument('--num-epochs', type=int, default=200, help='number of training epochs.')
+    parser.add_argument('--lr', type=float, default=0.0001, help='learning rate. default is 0.1.')
     parser.add_argument('--lr-decay', type=float, default=0.1, help='decay rate of learning rate. default is 0.1.')
-    parser.add_argument('--lr-decay-step', type=str, default='80,120', help='epochs at which learning rate decays. default is 80,120')
-    parser.add_argument('--loss', type=str, default='focal', help='SCCE, BCE, focal, dice, soft_dice')
+    parser.add_argument('--lr-decay-step', type=str, default='150,180', help='epochs at which learning rate decays. default is 80,120')
+    parser.add_argument('--loss', type=str, default='SCCE', help='SCCE, BCE, focal, dice, soft_dice')
 
     parser.add_argument('--optimizer', type=str, default='adam', help='sgd, nag')
     parser.add_argument('--model-name', type=str, default='pspunet', help='model name')
@@ -30,8 +29,8 @@ def parse_args():
     # Dataset
     parser.add_argument('--dataset-path', type=str, default='/home/seungtaek/ssd1/datasets/mapillary_vistas',
                         help='dataset path')
-    parser.add_argument('--image-height', type=int , default=256, help='image height')
-    parser.add_argument('--image-width', type=int, default=512, help='image width')
+    parser.add_argument('--image-height', type=int , default=512, help='image height')
+    parser.add_argument('--image-width', type=int, default=1024, help='image width')
 
 
     return parser.parse_args()
@@ -58,6 +57,7 @@ def show_predictions(img, gt, epoch, plot_dir):
     pred_mask = model.predict(img)
     display_sample([img[0], gt[0], create_mask(pred_mask[0])], epoch, plot_dir)
 
+
 class DisplayCallback(tf.keras.callbacks.Callback):
     def __init__(self, img, gt, plot_dir):
         super(DisplayCallback, self).__init__()
@@ -69,6 +69,19 @@ class DisplayCallback(tf.keras.callbacks.Callback):
         show_predictions(self.img, self.gt, epoch, self.plot_dir)
         print ('\nSample Prediction after epoch {}\n'.format(epoch+1))
 
+
+class SaveCallback(tf.keras.callbacks.Callback):
+    def __init__(self, base_dir):
+        super(SaveCallback, self).__init__()
+        self.base_dir = base_dir
+        self.save_dir = f'{self.base_dir}/save_model/'
+        os.mkdir(self.save_dir)
+
+    def on_epoch_end(self, epoch, logs=None):
+        model_save_dir = os.path.join(self.save_dir, f'{epoch:0>3}')
+        model.save(model_save_dir)
+
+
 if __name__ == '__main__':
     opt = parse_args()
 
@@ -77,13 +90,8 @@ if __name__ == '__main__':
     now = time.localtime(time.time())
     timePrefix = f'{now.tm_year}{now.tm_mon:0>2}{now.tm_mday:0>2}{now.tm_hour:0>2}{now.tm_min:0>2}{now.tm_sec:0>2}'
 
-    #ignore_classes = [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15,
-    #                 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-    #                28, 29, 30, 31, 32, 33, -1]
-
     ignore_classes = [-1]
-
-    num_classes = 5
+    num_classes = 2
 
     if not os.path.isdir('./log'):
         os.mkdir('./log')
@@ -121,13 +129,13 @@ if __name__ == '__main__':
     print("Val Shape:", dataset['val'])
 
     with strategy.scope():
+        #model = Unet(opt.image_height, opt.image_width, num_classes)
         model = Unet(opt.image_height, opt.image_width, num_classes)
-        #model = pspunet((opt.image_height, opt.image_width, 3), num_classes)
+
         train_ds = strategy.experimental_distribute_dataset(dataset['train'])
         val_ds = strategy.experimental_distribute_dataset(dataset['val'])
 
-        #loss_fn = get_loss(opt.loss)
-        loss_fn = tversky_loss
+        loss_fn = get_loss(opt.loss)
 
         model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=opt.lr),
@@ -135,7 +143,7 @@ if __name__ == '__main__':
             metrics=['accuracy']
         )
 
-    cp_prefix = os.path.join(checkpoints_dir, "ckpt_{epoch:0>3}.h5")
+    cp_prefix = os.path.join(checkpoints_dir, "ckpt_{epoch:0>3}.ckpt")
 
     lr_decay_step = list(map(int, opt.lr_decay_step.split(',')))
     tensorboar_logs_dir = f'{exp_base_dir}/tblogs'
@@ -143,16 +151,22 @@ if __name__ == '__main__':
 
     callbacks = [
         DisplayCallback(sample_image, sample_mask, plot_dir),
+        SaveCallback(exp_base_dir),
         tf.keras.callbacks.TensorBoard(log_dir=tensorboar_logs_dir),
         tf.keras.callbacks.ModelCheckpoint(filepath=cp_prefix),
         tf.keras.callbacks.LearningRateScheduler(lambda epoch: decay(epoch, opt.lr, opt.lr_decay, lr_decay_step))
     ]
 
+    '''
     steps_per_epoch = 2975 // opt.batch_size
     val_step = 500 // opt.batch_size
+    '''
 
-    #steps_per_epoch = 10
-    #val_step = 1
+    #steps_per_epoch = 18000 // opt.batch_size
+    #val_step = 2000 // opt.batch_size
+
+    steps_per_epoch = 10
+    val_step = 1
 
     history = model.fit(
         train_ds,
@@ -163,6 +177,3 @@ if __name__ == '__main__':
         callbacks=callbacks
     )
 
-    model_save_dir = f'{exp_base_dir}/save_model'
-    os.mkdir(model_save_dir)
-    model.save(model_save_dir)

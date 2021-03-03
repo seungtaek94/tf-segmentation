@@ -1,190 +1,132 @@
-import numpy as np
-from tensorflow.keras import Sequential
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
 import tensorflow as tf
-from tensorflow.keras.layers import Flatten, Conv2D, MaxPooling2D, Dense, Dropout, Softmax, Conv2DTranspose, \
-    BatchNormalization, Activation, AveragePooling2D
 
 
-def vgg16(input_shape):
-    model = Sequential()
-    model.add(Conv2D(64, (3, 3), padding="same", activation="relu", input_shape=input_shape))
-    model.add(Conv2D(64, (3, 3), padding="same", activation="relu", name="copy_crop1"))
-    model.add(MaxPooling2D((2, 2), strides=(2, 2)))
-    model.add(Conv2D(128, (3, 3), padding="same", activation="relu"))
-    model.add(Conv2D(128, (3, 3), padding="same", activation="relu", name="copy_crop2"))
-    model.add(MaxPooling2D((2, 2), strides=(2, 2)))
-    model.add(Conv2D(256, (3, 3), padding="same", activation="relu"))
-    model.add(Conv2D(256, (3, 3), padding="same", activation="relu"))
-    model.add(Conv2D(256, (3, 3), padding="same", activation="relu", name="copy_crop3"))
-    model.add(MaxPooling2D((2, 2), strides=(2, 2), name='block3_pool'))
-    model.add(Conv2D(512, (3, 3), padding="same", activation="relu"))
-    model.add(Conv2D(512, (3, 3), padding="same", activation="relu"))
-    model.add(Conv2D(512, (3, 3), padding="same", activation="relu", name="copy_crop4"))
-    model.add(MaxPooling2D((2, 2), strides=(2, 2), name='block4_pool'))
-    model.add(Conv2D(512, (3, 3), padding="same", activation="relu"))
-    model.add(Conv2D(512, (3, 3), padding="same", activation="relu"))
-    model.add(Conv2D(512, (3, 3), padding="same", activation="relu"))
-    model.add(MaxPooling2D((2, 2), strides=(2, 2), name="last_layer"))
-    return model
+class Block(tf.keras.Model):
+    def __init__(self, filters):
+        super(Block, self).__init__()
+
+        self.conv1 = tf.keras.layers.Conv2D(filters, 3, activation='relu', padding='same')
+        self.conv2 = tf.keras.layers.Conv2D(filters, 3, activation='relu', padding='same')
+
+    def call(self, x):
+        x = self.conv1(x)
+        x = self.conv2(x)
+        return x
 
 
-def global_average_pooling(input, gap_size):
-    w, h, c = (input.shape[1:])
-    x = AveragePooling2D((w / gap_size, h / gap_size))(input)
-    x = Conv2D(c // 4, (1, 1), padding="same", activation='relu')(x)
-    x = BatchNormalization()(x)
-    x = tf.image.resize(x, (w, h))
-    return x
+class DownSample(tf.keras.Model):
+    def __init__(self, filters):
+        super(DownSample, self).__init__()
+
+        self.conv_block = Block(filters)
+        self.pool = tf.keras.layers.MaxPool2D(pool_size=(2, 2))
+
+    def call(self, x):
+        x = self.conv_block(x)
+        pool_x = self.pool(x)
+
+        return pool_x, x
 
 
-def contract_path(input_shape):
-    input = tf.keras.layers.Input(shape=input_shape)
-    x = Conv2D(64, (3, 3), padding="same", activation="relu")(input)
-    x = Conv2D(64, (3, 3), padding="same", activation="relu", name="copy_crop1")(x)
-    x = MaxPooling2D((2, 2))(x)
-    x = Conv2D(128, (3, 3), padding="same", activation="relu")(x)
-    x = Conv2D(128, (3, 3), padding="same", activation="relu", name="copy_crop2")(x)
-    x = MaxPooling2D((2, 2))(x)
-    x = Conv2D(256, (3, 3), padding="same", activation="relu")(x)
-    x = Conv2D(256, (3, 3), padding="same", activation="relu", name="copy_crop3")(x)
-    x = MaxPooling2D((2, 2))(x)
-    x = Conv2D(512, (3, 3), padding="same", activation="relu")(x)
-    x = Conv2D(512, (3, 3), padding="same", activation="relu", name="copy_crop4")(x)
-    x = MaxPooling2D((2, 2))(x)
-    x = Conv2D(1024, (3, 3), padding="same", activation="relu")(x)
-    x = Conv2D(1024, (3, 3), padding="same", activation="relu", name="last_layer")(x)
-    contract_path = tf.keras.Model(inputs=input, outputs=x)
-    return contract_path
+class UpSample(tf.keras.Model):
+    def __init__(self, filters):
+        super(UpSample, self).__init__()
+        self.conv_up = tf.keras.layers.Conv2DTranspose(filters, kernel_size=2, strides=2, activation='relu')
+        self.concat = tf.keras.layers.Concatenate(axis=-1)
+        self.conv_block = Block(filters)
+
+    def call(self, inputs):
+        x1, x2 = inputs
+        x1 = self.conv_up(x1)
+        x1 = self.concat([x1, x2])
+        x1 = self.conv_block(x1)
+
+        return x1
 
 
-def pspunet(input_shape, n_classes):
-    contract_model = contract_path(input_shape=input_shape)
-    layer_names = ["copy_crop1", "copy_crop2", "copy_crop3", "copy_crop4"]
-    layers = [contract_model.get_layer(name).output for name in layer_names]
+class PyramidPoolingModule(tf.keras.Model):
+    def __init__(self, H=64, W=128, filters=512):
+        super(PyramidPoolingModule, self).__init__()
+        self.input_h = H
+        self.input_w = W
+        self.input_filters = filters
+        self.concat = tf.keras.layers.Concatenate(axis=-1)
 
-    extract_model = tf.keras.Model(inputs=contract_model.input, outputs=layers)
-    input = tf.keras.layers.Input(shape=input_shape)
-    output_layers = extract_model(inputs=input)
-    last_layer = output_layers[-1]
+        self.pooling_layer_1 = self.pooling_layer(1)
+        self.pooling_layer_2 = self.pooling_layer(2)
+        self.pooling_layer_3 = self.pooling_layer(3)
+        self.pooling_layer_4 = self.pooling_layer(4)
 
-    feature_map = last_layer
-    pooling_1 = global_average_pooling(feature_map, 1)
-    pooling_2 = global_average_pooling(feature_map, 2)
-    pooling_3 = global_average_pooling(feature_map, 3)
-    pooling_4 = global_average_pooling(feature_map, 6)
-    x = tf.keras.layers.Concatenate(axis=-1)([pooling_1, pooling_2, pooling_3, pooling_4])
-    x = Conv2D(256, (1, 1), padding="same")(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
 
-    x = tf.keras.layers.Concatenate()([x, output_layers[3]])
+    def call(self, x):
+        p1 = self.pooling_layer_1(x)
+        p1 = tf.raw_ops.ResizeBilinear(images=p1, size=(self.input_h, self.input_w))
+        p2 = self.pooling_layer_2(x)
+        p2 = tf.raw_ops.ResizeBilinear(images=p2, size=(self.input_h, self.input_w))
+        p3 = self.pooling_layer_3(x)
+        p3 = tf.raw_ops.ResizeBilinear(images=p3, size=(self.input_h, self.input_w))
+        p4 = self.pooling_layer_4(x)
+        p4 = tf.raw_ops.ResizeBilinear(images=p4, size=(self.input_h, self.input_w))
 
-    x = Conv2D(256, (3, 3), padding="same")(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
+        x = self.concat([x, p1, p2, p3, p4])
 
-    x = Conv2D(256, (3, 3), padding="same")(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
+        return x
 
-    x = Conv2DTranspose(256, 4, (2, 2), padding="same")(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = tf.keras.layers.Concatenate()([x, output_layers[2]])
+    def pooling_layer(self, pool_ratio):
+        layer = tf.keras.Sequential()
+        layer.add(tf.keras.layers.AveragePooling2D((self.input_h//pool_ratio, self.input_w//pool_ratio)))
+        layer.add(tf.keras.layers.Conv2D(self.input_filters//4, 1, padding='same', activation='relu'))
+        layer.add(tf.keras.layers.BatchNormalization())
+        return layer
 
-    x = Conv2D(128, (3, 3), padding="same")(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
 
-    x = Conv2D(128, (3, 3), padding="same")(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
+class Unet(tf.keras.Model):
+    def __init__(self, img_height, img_width, classes_num=35):
+        super(Unet, self).__init__()
 
-    x = Conv2DTranspose(128, 4, (2, 2), padding="same")(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = tf.keras.layers.Concatenate()([x, output_layers[1]])
+        self.conv_down1 = DownSample(64)
+        self.conv_down2 = DownSample(128)
+        self.conv_down3 = DownSample(256)
+        self.conv_down4 = DownSample(512)
 
-    x = Conv2D(64, (3, 3), padding="same")(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
+        self.pyramid_pool = PyramidPoolingModule()
 
-    x = Conv2D(64, (3, 3), padding="same")(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
+        self.conv_up2 = UpSample(256)
+        self.conv_up3 = UpSample(128)
+        self.conv_up4 = UpSample(64)
 
-    x = Conv2DTranspose(64, 4, (2, 2), padding="same")(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = tf.keras.layers.Concatenate()([x, output_layers[0]])
+        if classes_num == 1:
+            self.out =  tf.keras.layers.Conv2D(1, 1, padding='same', activation='sigmoid', name='Output')
+            print('Out Put with Sigmoid')
+        else:
+            self.out =  tf.keras.layers.Conv2D(classes_num, 1, padding='same', activation='softmax', name='Output')
+            print('Out Put with Softmax')
 
-    x = Conv2D(64, (3, 3), padding="same")(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
+    def call(self, x):
+        x, conv1 = self.conv_down1(x)
+        x, conv2 = self.conv_down2(x)
+        x, conv3 = self.conv_down3(x)
+        x, conv4 = self.conv_down4(x)
 
-    x = Conv2D(64, (3, 3), padding="same")(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
+        x = self.pyramid_pool(conv4)
 
-    #x = Conv2D(n_classes, (1, 1), activation="relu")(x)
+        x = self.conv_up2([x, conv3])
+        x = self.conv_up3([x, conv2])
+        x = self.conv_up4([x, conv1])
 
-    if n_classes == 1:
-        x = Conv2D(n_classes, 1, padding='same', activation='sigmoid', name='Output')(x)
-        print('Out Put with Sigmoid')
-    else:
-        x = Conv2D(n_classes, 1, padding='same', activation='softmax', name='Output')(x)
-        print(x.shape)
-        print('Out Put with Softmax')
+        x = self.out(x)
 
-    return tf.keras.Model(inputs=input, outputs=x)
+        return x
 
 
 if __name__ == "__main__":
+    model = Unet(512, 1024, 5)
 
-    model = pspunet((512, 1024, 3), 5)
-
-    x = tf.random.uniform([2, 512, 1024, 3], 0, 1)
-
+    x = tf.random.uniform([1, 512, 1024, 3], 0, 1)
     y = model(x)
-
-    '''
-    from util.func import *
-    from util.dataloader.mapilaryVitas import *
-
-    data_path = '/home/seungtaek/ssd1/datasets/mapillary_vistas'
-    json_path = os.path.join(data_path, 'config_v2.0.json')
-    print(json_path)
-    Labels = pars_json_label(json_path)
-
-    ignore_class = [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28, 29,
-                    30, 31, 32, 33, -1]
-
-    dataset = get_dataset(data_path, ignore_class, 512, 1024, batch_size=2)
-
-    for i, data in enumerate(dataset['train']):
-        display_list = []
-        print(data[0][0].shape)
-        print(data[1][0].shape)
-
-        pred = model(data[0])
-        pred = tf.argmax(pred, axis=-1)
-        print(pred.shape)
-
-        uniques, idx, counts = get_uniques(pred[0])
-
-        tf.print("tf.shape(uniques) =", tf.shape(uniques))
-        tf.print("tf.shape(idx) =", tf.shape(idx))
-        tf.print("tf.shape(counts) =", tf.shape(counts))
-        tf.print("uniques =", uniques)
-
-        display_list.append(data[0][0])
-        display_list.append(data[1][0])
-        display_list.append(pred[0])
-        display_sample_one(display_list)
-        if i == 3: break
-
-    display_sample(display_list)
-    '''
-
+    print(y.shape)
 
     model.summary()
