@@ -1,27 +1,39 @@
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '4'
-os.environ["CUDA_VISIBLE_DEVICES"] = '2, 3'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0,1,2,3'
 
 import tensorflow as tf
 import time, logging
 import argparse
-from models.unet import Unet
-from models.pspunet import pspunet
-#from util.dataloader.cityscapes import get_dataset
+from models.pspunet import Unet
 from util.dataloader.mapilaryVitas import get_dataset
 from util.func import *
 from util.losses import *
+from util.scheduler import *
 
 def parse_args():
     parser = argparse.ArgumentParser()
     # Training
-    parser.add_argument('--batch-size', type=int, default=8, help='training batch size per device (CPU/GPU).')
+    parser.add_argument('--batch-size', type=int, default=32, help='training batch size per device (CPU/GPU).')
     #parser.add_argument('--num-gpus', type=int, default=2, help='number of gpus to use.')
-    parser.add_argument('--model', type=str, default='unet', help='model to use. options are resnet and wrn. default is resnet.')
+    parser.add_argument('--model', type=str, default='unet',
+                        help='model to use. options are resnet and wrn. default is resnet.')
     parser.add_argument('--num-epochs', type=int, default=200, help='number of training epochs.')
+
     parser.add_argument('--lr', type=float, default=0.0001, help='learning rate. default is 0.1.')
+
+    # linear lr decay
     parser.add_argument('--lr-decay', type=float, default=0.1, help='decay rate of learning rate. default is 0.1.')
-    parser.add_argument('--lr-decay-step', type=str, default='150,180', help='epochs at which learning rate decays. default is 80,120')
+    parser.add_argument('--lr-decay-step', type=str, default='150,180',
+                        help='epochs at which learning rate decays. default is 80,120')
+
+    # Cosine Annealing
+    parser.add_argument('--use-ca', type=bool, default=False, help='Use Cosine Annealing')
+    parser.add_argument('--ca-max-lr', type=float, default=2e-4, help='each steps initial learning rate')
+    parser.add_argument('--ca-min-lr', type=float, default=1e-6, help='each steps final learning rate')
+    parser.add_argument('--ca-step', type=int, default=20, help='Annealing Step')
+
+    # Loss
     parser.add_argument('--loss', type=str, default='SCCE', help='SCCE, BCE, focal, dice, soft_dice')
 
     parser.add_argument('--optimizer', type=str, default='adam', help='sgd, nag')
@@ -31,18 +43,11 @@ def parse_args():
     parser.add_argument('--dataset-path', type=str, default='/home/seungtaek/ssd1/datasets/mapillary_vistas',
                         help='dataset path')
     parser.add_argument('--image-height', type=int , default=512, help='image height')
-    parser.add_argument('--image-width', type=int, default=1024, help='image width')
+    parser.add_argument('--image-width', type=int, default=512, help='image width')
 
 
     return parser.parse_args()
 
-def decay(epoch, lr, lr_decay, lr_decay_step):
-    if epoch < lr_decay_step[0]:
-        return lr
-    elif lr_decay_step[0] <= epoch < lr_decay_step[1]:
-        return lr * lr_decay
-    else:
-        return lr * (lr_decay ** 2)
 
 
 def show_predictions(img, gt, epoch, plot_dir):
@@ -91,10 +96,6 @@ if __name__ == '__main__':
     now = time.localtime(time.time())
     timePrefix = f'{now.tm_year}{now.tm_mon:0>2}{now.tm_mday:0>2}{now.tm_hour:0>2}{now.tm_min:0>2}{now.tm_sec:0>2}'
 
-    #ignore_classes = [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15,
-    #                 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-    #                28, 29, 30, 31, 32, 33, -1]
-
     ignore_classes = [-1]
 
     num_classes = 2
@@ -136,7 +137,8 @@ if __name__ == '__main__':
 
     with strategy.scope():
         #model = Unet(opt.image_height, opt.image_width, num_classes)
-        model = pspunet((opt.image_height, opt.image_width, 3), num_classes)
+        model = Unet(opt.image_height, opt.image_width, num_classes)
+
         train_ds = strategy.experimental_distribute_dataset(dataset['train'])
         val_ds = strategy.experimental_distribute_dataset(dataset['val'])
 
@@ -148,18 +150,23 @@ if __name__ == '__main__':
             metrics=['accuracy']
         )
 
-    cp_prefix = os.path.join(checkpoints_dir, "ckpt_{epoch:0>3}.ckpt")
 
-    lr_decay_step = list(map(int, opt.lr_decay_step.split(',')))
+    cp_prefix = os.path.join(checkpoints_dir, "ckpt_{epoch:0>3}.ckpt")
     tensorboar_logs_dir = f'{exp_base_dir}/tblogs'
     logger.info(f'Tensorboard: /home/seungtaek/project/segmentation/{tensorboar_logs_dir}')
+
+    if opt.use_ca:
+        lr_scheduler = CosineAnnealingScheduler(T_max=opt.ca_step, eta_max=opt.ca_max_lr, eta_min=opt.ca_min_lr)
+    else:
+        lr_decay_step = list(map(int, opt.lr_decay_step.split(',')))
+        lr_scheduler = tf.keras.callbacks.LearningRateScheduler(lambda epoch: decay(epoch, opt.lr, opt.lr_decay, lr_decay_step))
 
     callbacks = [
         DisplayCallback(sample_image, sample_mask, plot_dir),
         SaveCallback(exp_base_dir),
         tf.keras.callbacks.TensorBoard(log_dir=tensorboar_logs_dir),
         tf.keras.callbacks.ModelCheckpoint(filepath=cp_prefix),
-        tf.keras.callbacks.LearningRateScheduler(lambda epoch: decay(epoch, opt.lr, opt.lr_decay, lr_decay_step))
+        lr_scheduler
     ]
 
     '''
@@ -167,11 +174,11 @@ if __name__ == '__main__':
     val_step = 500 // opt.batch_size
     '''
 
-    steps_per_epoch = 18000 // opt.batch_size
-    val_step = 2000 // opt.batch_size
+    #steps_per_epoch = 18000 // opt.batch_size
+    #val_step = 2000 // opt.batch_size
 
-    #steps_per_epoch = 10
-    #val_step = 1
+    steps_per_epoch = 10
+    val_step = 1
 
     history = model.fit(
         train_ds,
