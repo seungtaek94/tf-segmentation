@@ -5,9 +5,9 @@ import numpy as np
 import json
 import pathlib
 import tensorflow as tf
-import matplotlib.pyplot as plt
 from collections import namedtuple
-from util.func import *
+from util.func import display_sample_one, get_uniques
+from util.dataloader.func import augmentation
 
 
 Label = namedtuple('Label', [
@@ -16,6 +16,7 @@ Label = namedtuple('Label', [
     'id',
     'evaluate',
 ])
+
 
 def pars_json_label(json_path: str) -> list:
     Labels = []
@@ -29,9 +30,10 @@ def pars_json_label(json_path: str) -> list:
     return Labels
 
 
+@tf.function
 def parse_image(img_path: str, ignore_class: list, img_height=512, img_width=1024) -> dict:
     image = tf.io.read_file(img_path)
-    image = tf.image.decode_jpeg(image, channels=3)
+    image = tf.image.decode_jpeg(image, channels=3, dct_method="INTEGER_ACCURATE")
     image = tf.image.resize(image, (img_height, img_width))
     image = tf.cast(image, tf.uint8)
 
@@ -61,7 +63,6 @@ def parse_image(img_path: str, ignore_class: list, img_height=512, img_width=102
     mask += tf.where(tf.reduce_all(mask_row == (250, 170, 29), axis=2), np.dtype('uint8').type(1), 0)  # Zigzag
 
     #mask += tf.where(tf.reduce_all(mask_row == (196, 196, 196), axis=2), np.dtype('uint8').type(3), 0)  # Curb
-
     #mask += tf.where(tf.reduce_all(mask_row == (128, 128, 128), axis=2), np.dtype('uint8').type(4), 0)  # Traffic Sign Frame
     #mask += tf.where(tf.reduce_all(mask_row == (192, 192, 192), axis=2), np.dtype('uint8').type(4), 0)  # Traffic Sign - Ambiguous, back
     #mask += tf.where(tf.reduce_all(mask_row == (220, 220, 0), axis=2), np.dtype('uint8').type(4), 0)  # Traffic Sign - Direction, temp
@@ -73,24 +74,23 @@ def parse_image(img_path: str, ignore_class: list, img_height=512, img_width=102
 
     return {'image': image, 'segmentation_mask': mask}
 
+
 @tf.function
 def normalize(input_image: tf.Tensor, input_mask: tf.Tensor) -> tuple:
     input_image = tf.cast(input_image, tf.float32) / 255.0
     input_mask = tf.cast(input_mask, tf.float32)
     return input_image, input_mask
 
+
 @tf.function
 def load_image_train(datapoint: dict) -> tuple:
     input_image = datapoint['image']
     input_mask = datapoint['segmentation_mask']
 
-    if tf.random.uniform(()) > 0.5:
-        input_image = tf.image.flip_left_right(input_image)
-        input_mask = tf.image.flip_left_right(input_mask)
-
     input_image, input_mask = normalize(input_image, input_mask)
 
     return input_image, input_mask
+
 
 @tf.function
 def load_image_test(datapoint: dict, img_height=1024, img_width=2048) -> tuple:
@@ -126,6 +126,7 @@ def get_dataset(path: str, ignore_class: list, img_height=512, img_width=1024, b
 
 
     train_ds = train_ds.map(load_image_train, num_parallel_calls=tf.data.experimental.AUTOTUNE)
+    train_ds = train_ds.map(augmentation, num_parallel_calls=tf.data.experimental.AUTOTUNE)
     #train_ds = train_ds.shuffle(buffer_size=BUFFER_SIZE, seed=123)
     train_ds = train_ds.repeat()
     train_ds = train_ds.batch(batch_size)
@@ -167,10 +168,10 @@ if __name__ == '__main__':
 
         display_list.append(data[0][0])
         display_list.append(data[1][0])
-        display_sample(display_list)
-        if i == 3: break
+        display_sample_one(display_list)
+        if i == 20: break
 
-    display_sample(display_list)
+    display_sample_one(display_list)
 
 
     print("Train: ", dataset['train'])

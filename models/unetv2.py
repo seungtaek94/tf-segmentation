@@ -2,8 +2,11 @@ import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 import tensorflow as tf
+import matplotlib.pyplot as plt
+import numpy as np
 
-class Block(tf.keras.Model):
+
+class Block(tf.keras.layers.Layer):
     def __init__(self, filters):
         super(Block, self).__init__()
 
@@ -18,7 +21,7 @@ class Block(tf.keras.Model):
         return x
 
 
-class DownSample(tf.keras.Model):
+class DownSample(tf.keras.layers.Layer):
     def __init__(self, filters):
         super(DownSample, self).__init__()
 
@@ -31,7 +34,7 @@ class DownSample(tf.keras.Model):
 
         return pool_x, x
 
-class UpSample(tf.keras.Model):
+class UpSample(tf.keras.layers.Layer):
     def __init__(self, filters):
         super(UpSample, self).__init__()
         self.conv_up = tf.keras.layers.Conv2DTranspose(filters, kernel_size=2, strides=2, activation='relu')
@@ -50,6 +53,7 @@ class Unet(tf.keras.Model):
     def __init__(self, img_height, img_width, classes_num=35):
         super(Unet, self).__init__()
 
+        self.input_layer = tf.keras.Input(shape=(512, 1024, 3))
         self.conv_down1 = DownSample(64)
         self.conv_down2 = DownSample(128)
         self.conv_down3 = DownSample(256)
@@ -63,11 +67,13 @@ class Unet(tf.keras.Model):
         self.conv_up4 = UpSample(64)
 
         if classes_num == 1:
-            self.out =  tf.keras.layers.Conv2D(1, 1, padding='same', activation='sigmoid', name='Output')
+            self.classifier =  tf.keras.layers.Conv2D(1, 1, padding='same', activation='sigmoid', name='Output')
             print('Out Put with Sigmoid')
         else:
-            self.out =  tf.keras.layers.Conv2D(classes_num, 1, padding='same', activation='softmax', name='Output')
+            self.classifier =  tf.keras.layers.Conv2D(classes_num, 1, padding='same', activation='softmax', name='Output')
             print('Out Put with Softmax')
+
+        self.out = self.call(self.input_layer)
 
     def call(self, x):
         x, conv1 = self.conv_down1(x)
@@ -81,7 +87,7 @@ class Unet(tf.keras.Model):
         x = self.conv_up3([x, conv2])
         x = self.conv_up4([x, conv1])
 
-        x = self.out(x)
+        x = self.classifier(x)
 
         return x
 
@@ -90,7 +96,12 @@ if __name__ == "__main__":
     model = Unet(512, 1024, 5)
 
     x = tf.random.uniform([2, 512, 1024, 3], 0, 1)
-    y = model(x)
-    print(y.shape)
+    #y = model(x)
+    #print(y.shape)
 
-    model.summary()
+    new_model = tf.keras.Model(inputs=model.input_layer, outputs=model.layers[-2].output)
+
+    new_model.summary()
+
+
+    #model.summary()

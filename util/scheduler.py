@@ -5,6 +5,7 @@ import tensorflow as tf
 class CosineAnnealingScheduler(tf.keras.callbacks.Callback):
     """Cosine annealing scheduler.
     """
+
     def __init__(self, T_max, eta_max, eta_min=0, verbose=0):
         super(CosineAnnealingScheduler, self).__init__()
         self.T_max = T_max
@@ -28,8 +29,11 @@ class CosineAnnealingScheduler(tf.keras.callbacks.Callback):
 
 def decay(epoch, lr, lr_decay, lr_decay_step):
     if epoch < lr_decay_step[0]:
-        return lr
+        learning_rate = lr
     elif lr_decay_step[0] <= epoch < lr_decay_step[1]:
-        return lr * lr_decay
+        learning_rate = lr * lr_decay
     else:
-        return lr * (lr_decay ** 2)
+        learning_rate = lr * (lr_decay ** 2)
+
+    print(f'LR[EPOCH_{epoch:0>3}]: {learning_rate}')
+    return learning_rate

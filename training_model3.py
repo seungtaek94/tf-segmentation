@@ -1,6 +1,6 @@
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '4'
-os.environ["CUDA_VISIBLE_DEVICES"] = '2, 3'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
 import tensorflow as tf
 
@@ -8,7 +8,7 @@ import time, logging
 
 import argparse
 from models.pspunet import pspunet
-from util.dataloader.mapilaryVitas import get_dataset
+from util.dataloader.customRoad import get_dataset
 from util.func import display_sample, create_mask
 from util.losses import get_loss
 from util.scheduler import decay, CosineAnnealingScheduler
@@ -17,7 +17,7 @@ from shutil import copyfile
 def parse_args():
     parser = argparse.ArgumentParser()
     # Training
-    parser.add_argument('--batch-size', type=int, default=16, help='training batch size per device (CPU/GPU).')
+    parser.add_argument('--batch-size', type=int, default=8, help='training batch size per device (CPU/GPU).')
     #parser.add_argument('--num-gpus', type=int, default=2, help='number of gpus to use.')
     parser.add_argument('--num-epochs', type=int, default=120, help='number of training epochs.')
 
@@ -42,8 +42,8 @@ def parse_args():
                         help='model-name should be same with <models/{name}.py>')
 
     # Dataset
-    parser.add_argument('--dataset', type=str, default='vitas', help='cityscapes, vitas, customRoad')
-    parser.add_argument('--dataset-path', type=str, default='/home/seungtaek/ssd1/datasets/mapillary_vistas',
+    parser.add_argument('--dataset', type=str, default='customRoad', help='cityscapes, vitas, customRoad')
+    parser.add_argument('--dataset-path', type=str, default='/home/seungtaek/ssd1/datasets/road_seg_v1',
                         help='dataset path')
     parser.add_argument('--image-height', type=int , default=512, help='image height')
     parser.add_argument('--image-width', type=int, default=512, help='image width')
@@ -132,7 +132,7 @@ if __name__ == '__main__':
 
     logger.info(f'Exp Dir: {exp_base_dir}')
 
-    dataset = get_dataset(opt.dataset_path, ignore_classes, opt.image_height, opt.image_width, batch_size=opt.batch_size)
+    dataset = get_dataset(opt.dataset_path, opt.image_height, opt.image_width, batch_size=opt.batch_size)
 
     for image, mask in dataset['train'].take(1):
         sample_image, sample_mask = image, mask
@@ -154,7 +154,6 @@ if __name__ == '__main__':
             loss=loss_fn,
             metrics=['accuracy']
         )
-
 
     cp_prefix = os.path.join(checkpoints_dir, "ckpt_{epoch:0>3}.ckpt")
     tensorboar_logs_dir = f'{exp_base_dir}/tblogs'
@@ -179,11 +178,11 @@ if __name__ == '__main__':
     val_step = 500 // opt.batch_size
     '''
 
-    steps_per_epoch = 18000 // opt.batch_size
-    val_step = 2000 // opt.batch_size
+    #steps_per_epoch = 18000 // opt.batch_size
+    #val_step = 2000 // opt.batch_size
 
-    #steps_per_epoch = 10
-    #val_step = 1
+    steps_per_epoch = 500
+    val_step = 116
 
     history = model.fit(
         train_ds,
