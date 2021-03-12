@@ -1,30 +1,40 @@
 import math
 import tensorflow as tf
+import tensorflow.keras.backend as backend
+import matplotlib.pyplot as plt
 
 
-class CosineAnnealingScheduler(tf.keras.callbacks.Callback):
-    """Cosine annealing scheduler.
-    """
+class CosineAnnealingLearningRateSchedule(tf.keras.callbacks.Callback):
+    # constructor
+    def __init__(self, end_Epochs, steps, min_finalized_epochs, max_lr, min_lr, max_lr_decay_rate=4e-5):
+        self.end_Epochs = end_Epochs
+        self.max_lr = max_lr
+        self.min_lr = min_lr
+        self.steps = steps
+        self.lrates = list()
+        self.max_lr_decay_rate = max_lr_decay_rate
 
-    def __init__(self, T_max, eta_max, eta_min=0, verbose=0):
-        super(CosineAnnealingScheduler, self).__init__()
-        self.T_max = T_max
-        self.eta_max = eta_max
-        self.eta_min = eta_min
-        self.verbose = verbose
+    # caculate learning rate for an epoch
+    def cosine_annealing(self, epoch):
+        cos_inner = (math.pi * (epoch % self.steps)) / (self.steps)
+        return (self.max_lr / 2 * (math.cos(cos_inner) + 1)) + self.min_lr
 
+    # calculate and set learning rate at the start of the epoch
     def on_epoch_begin(self, epoch, logs=None):
-        if not hasattr(self.model.optimizer, 'lr'):
-            raise ValueError('Optimizer must have a "lr" attribute.')
-        lr = self.eta_min + (self.eta_max - self.eta_min) * (1 + math.cos(math.pi * epoch / self.T_max)) / 2
-        tf.keras.backend.set_value(self.model.optimizer.lr, lr)
-        if self.verbose == 0:
-            print('\nEpoch %05d: CosineAnnealingScheduler setting learning '
-                  'rate to %s.' % (epoch + 1, lr))
+        if ((self.end_Epochs - epoch) > self.steps):
+            # calculate learning rate
+            if epoch % self.steps == 0:
+                self.max_lr -= self.max_lr_decay_rate
 
-    def on_epoch_end(self, epoch, logs=None):
-        logs = logs or {}
-        logs['lr'] = tf.keras.backend.get_value(self.model.optimizer.lr)
+            lr = self.cosine_annealing(epoch)
+            print('\nEpoch %05d: CosineAnnealingScheduler setting learng rate to %s.' % (epoch + 1, lr))
+        # 남은 epoch이 step보다 작으면 min_lr 적용.
+        else:
+            lr = self.min_lr
+
+        backend.set_value(self.model.optimizer.lr, lr)
+        # log value
+        self.lrates.append(lr)
 
 
 def decay(epoch, lr, lr_decay, lr_decay_step):
@@ -37,3 +47,20 @@ def decay(epoch, lr, lr_decay, lr_decay_step):
 
     print(f'LR[EPOCH_{epoch:0>3}]: {learning_rate}')
     return learning_rate
+
+
+
+if __name__ =="__main__":
+    cosine_schedule = CosineAnnealingLearningRateSchedule(end_Epochs=120, steps=20, min_finalized_epochs=20, max_lr=2e-4, min_lr=1e-6)
+
+    for i in range(1, 120):
+        cosine_schedule.on_epoch_begin(i)
+
+    import matplotlib.pyplot as plt
+
+    plt.plot(cosine_schedule.lrates)
+    plt.title('Cosine Annealing')
+    plt.xlabel('epochs')
+    plt.ylabel('learning_rate')
+    plt.grid()
+    plt.show()
